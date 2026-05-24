@@ -7,9 +7,10 @@ use sha2::{Digest, Sha256};
 use tracing::debug;
 
 use crate::chunk::chunk_type_name;
+use crate::embedding::{EmbeddingBackend, cosine_similarity};
 use crate::vault::{IndexWriteSummary, NoteMetadata, VaultIndex};
 
-const INDEX_VERSION: i64 = 2;
+const INDEX_VERSION: i64 = 3;
 
 pub struct IndexStore {
     conn: Connection,
@@ -17,11 +18,17 @@ pub struct IndexStore {
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SearchHit {
+    pub chunk_id: i64,
     pub path: String,
     pub title: String,
     pub heading_path: String,
     pub snippet: String,
     pub score: f64,
+    pub keyword_score: f64,
+    pub semantic_score: f64,
+    pub recency_score: f64,
+    pub link_score: f64,
+    pub tag_score: f64,
     pub token_estimate: usize,
 }
 
@@ -61,6 +68,7 @@ impl IndexStore {
             insert_links(&tx, note_id, note, &mut summary)?;
         }
 
+        delete_missing_notes(&tx, index)?;
         rebuild_fts_if_empty(&tx)?;
         tx.commit()?;
         Ok(summary)
@@ -75,6 +83,7 @@ impl IndexStore {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT
+                chunks.id,
                 notes.path,
                 notes.title,
                 chunks.heading_path,
@@ -93,17 +102,101 @@ impl IndexStore {
         let hits = stmt
             .query_map(params![fts_query, limit as i64], |row| {
                 Ok(SearchHit {
-                    path: row.get(0)?,
-                    title: row.get(1)?,
-                    heading_path: row.get(2)?,
-                    snippet: row.get(3)?,
-                    score: -row.get::<_, f64>(4)?,
-                    token_estimate: row.get::<_, i64>(5)? as usize,
+                    chunk_id: row.get(0)?,
+                    path: row.get(1)?,
+                    title: row.get(2)?,
+                    heading_path: row.get(3)?,
+                    snippet: row.get(4)?,
+                    score: -row.get::<_, f64>(5)?,
+                    keyword_score: -row.get::<_, f64>(5)?,
+                    semantic_score: 0.0,
+                    recency_score: 0.0,
+                    link_score: 0.0,
+                    tag_score: 0.0,
+                    token_estimate: row.get::<_, i64>(6)? as usize,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         Ok(hits)
+    }
+
+    pub fn hybrid_search(
+        &self,
+        query: &str,
+        limit: usize,
+        backend: &dyn EmbeddingBackend,
+        config: &crate::config::Config,
+    ) -> Result<Vec<SearchHit>> {
+        let mut hits = self.search(query, limit.saturating_mul(3).max(limit))?;
+        let query_embedding = backend.embed(query)?;
+
+        for hit in &mut hits {
+            if let Some(vector) = self.embedding_for_chunk(hit.chunk_id, backend.model())? {
+                hit.semantic_score = f64::from(cosine_similarity(&query_embedding.vector, &vector));
+            }
+            hit.recency_score = self.recency_score(hit.chunk_id)?;
+            hit.link_score = self.link_score(&hit.path)?;
+            hit.tag_score = self.tag_score(&hit.path, query)?;
+            hit.score = hit.keyword_score * f64::from(config.search.keyword_weight)
+                + hit.semantic_score * f64::from(config.search.semantic_weight)
+                + hit.recency_score * f64::from(config.search.recency_weight)
+                + hit.link_score * f64::from(config.search.link_weight)
+                + hit.tag_score * f64::from(config.search.tag_weight);
+        }
+
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score));
+        hits.truncate(limit);
+        self.audit_retrieval(query, &hits)?;
+        Ok(hits)
+    }
+
+    pub fn generate_embeddings(&mut self, backend: &dyn EmbeddingBackend) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut stmt = tx.prepare(
+            r#"
+            SELECT chunks.id, chunks.content
+            FROM chunks
+            LEFT JOIN embeddings
+                ON embeddings.chunk_id = chunks.id
+                AND embeddings.model = ?1
+            WHERE embeddings.chunk_id IS NULL
+            "#,
+        )?;
+        let pending = stmt
+            .query_map([backend.model()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+
+        let mut written = 0;
+        for (chunk_id, content) in pending {
+            let embedding = backend.embed(&content)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO embeddings (chunk_id, model, dimensions, vector, created_at) VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+                params![
+                    chunk_id,
+                    embedding.model,
+                    embedding.vector.len() as i64,
+                    serde_json::to_string(&embedding.vector)?,
+                ],
+            )?;
+            written += 1;
+        }
+
+        tx.commit()?;
+        Ok(written)
+    }
+
+    pub fn stats(&self) -> Result<StoreStats> {
+        Ok(StoreStats {
+            notes: count(&self.conn, "notes")?,
+            chunks: count(&self.conn, "chunks")?,
+            tags: count(&self.conn, "tags")?,
+            links: count(&self.conn, "links")?,
+            embeddings: count(&self.conn, "embeddings")?,
+        })
     }
 
     fn bootstrap(&self) -> Result<()> {
@@ -125,7 +218,7 @@ impl IndexStore {
                 modified_unix_secs INTEGER,
                 file_size INTEGER NOT NULL,
                 content_hash TEXT NOT NULL,
-                index_version INTEGER NOT NULL DEFAULT 2,
+                index_version INTEGER NOT NULL DEFAULT 3,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -175,12 +268,70 @@ impl IndexStore {
                 FOREIGN KEY(source_note_id) REFERENCES notes(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS embeddings (
+                chunk_id INTEGER NOT NULL,
+                model TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                vector TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE,
+                PRIMARY KEY(chunk_id, model)
+            );
+
+            CREATE TABLE IF NOT EXISTS retrieval_audit (
+                id INTEGER PRIMARY KEY,
+                query TEXT NOT NULL,
+                result_paths TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                client TEXT NOT NULL DEFAULT 'cli'
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_events (
+                id INTEGER PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             INSERT OR IGNORE INTO migrations (id, name) VALUES (1, 'initial_metadata_index');
             "#,
         )?;
         ensure_notes_index_version(&self.conn)?;
         Ok(())
     }
+}
+
+fn delete_missing_notes(conn: &Connection, index: &VaultIndex) -> Result<()> {
+    let current = index
+        .notes
+        .iter()
+        .map(|note| path_to_db(&note.path))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut stmt = conn.prepare("SELECT id, path FROM notes")?;
+    let existing = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    for (note_id, path) in existing {
+        if !current.contains(&path) {
+            clear_note_children(conn, note_id)?;
+            conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StoreStats {
+    pub notes: i64,
+    pub chunks: i64,
+    pub tags: i64,
+    pub links: i64,
+    pub embeddings: i64,
 }
 
 fn existing_note_fresh(conn: &Connection, path: &Path, content_hash: &str) -> Result<bool> {
@@ -257,10 +408,94 @@ fn upsert_note(conn: &Connection, note: &NoteMetadata) -> Result<i64> {
 
 fn clear_note_children(conn: &Connection, note_id: i64) -> Result<()> {
     delete_note_fts(conn, note_id)?;
+    conn.execute(
+        "DELETE FROM embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE note_id = ?1)",
+        [note_id],
+    )?;
     conn.execute("DELETE FROM chunks WHERE note_id = ?1", [note_id])?;
     conn.execute("DELETE FROM note_tags WHERE note_id = ?1", [note_id])?;
     conn.execute("DELETE FROM links WHERE source_note_id = ?1", [note_id])?;
     Ok(())
+}
+
+impl IndexStore {
+    fn embedding_for_chunk(&self, chunk_id: i64, model: &str) -> Result<Option<Vec<f32>>> {
+        self.conn
+            .query_row(
+                "SELECT vector FROM embeddings WHERE chunk_id = ?1 AND model = ?2",
+                params![chunk_id, model],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|raw| serde_json::from_str(&raw).context("invalid stored embedding vector"))
+            .transpose()
+    }
+
+    fn recency_score(&self, chunk_id: i64) -> Result<f64> {
+        let modified: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT notes.modified_unix_secs FROM chunks JOIN notes ON notes.id = chunks.note_id WHERE chunks.id = ?1",
+                [chunk_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(modified) = modified else {
+            return Ok(0.0);
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs() as i64);
+        let age_days = ((now - modified).max(0) as f64) / 86_400.0;
+        Ok(1.0 / (1.0 + age_days / 30.0))
+    }
+
+    fn link_score(&self, path: &str) -> Result<f64> {
+        let stem = Path::new(path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(path);
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM links WHERE lower(target) LIKE '%' || lower(?1) || '%'",
+            [stem],
+            |row| row.get(0),
+        )?;
+        Ok((count as f64).min(5.0) / 5.0)
+    }
+
+    fn tag_score(&self, path: &str, query: &str) -> Result<f64> {
+        let query = query.to_lowercase();
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT tags.name
+            FROM tags
+            JOIN note_tags ON note_tags.tag_id = tags.id
+            JOIN notes ON notes.id = note_tags.note_id
+            WHERE notes.path = ?1
+            "#,
+        )?;
+        let tags = stmt
+            .query_map([path], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if tags.is_empty() {
+            return Ok(0.0);
+        }
+        let matches = tags
+            .iter()
+            .filter(|tag| query.contains(tag.as_str()))
+            .count();
+        Ok(matches as f64 / tags.len() as f64)
+    }
+
+    pub fn audit_retrieval(&self, query: &str, hits: &[SearchHit]) -> Result<()> {
+        let paths = hits.iter().map(|hit| hit.path.clone()).collect::<Vec<_>>();
+        self.conn.execute(
+            "INSERT INTO retrieval_audit (query, result_paths, client) VALUES (?1, ?2, 'cli')",
+            params![query, serde_json::to_string(&paths)?],
+        )?;
+        Ok(())
+    }
 }
 
 fn insert_chunks(
@@ -410,4 +645,10 @@ fn fts_query(query: &str) -> String {
         .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn count(conn: &Connection, table: &str) -> Result<i64> {
+    let sql = format!("SELECT count(*) FROM {table}");
+    conn.query_row(&sql, [], |row| row.get(0))
+        .with_context(|| format!("failed to count {table}"))
 }

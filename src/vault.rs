@@ -60,18 +60,6 @@ pub struct IndexWriteSummary {
     pub links_written: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct SearchResult {
-    pub note: NoteMetadata,
-    pub score: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ContextBundle {
-    pub query: String,
-    pub sources: Vec<SearchResult>,
-}
-
 impl VaultIndex {
     pub fn scan(config: &Config) -> Result<Self> {
         let vault_path = config
@@ -145,91 +133,6 @@ impl VaultIndex {
             writes: Some(writes),
             ..self.summary()
         }
-    }
-
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
-        let terms = query_terms(query);
-        let mut results: Vec<_> = self
-            .notes
-            .iter()
-            .filter_map(|note| {
-                let haystack = format!(
-                    "{} {} {}",
-                    note.path.display(),
-                    note.title,
-                    note.blocks
-                        .iter()
-                        .map(|block| block.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                )
-                .to_lowercase();
-                let score = terms
-                    .iter()
-                    .filter(|term| haystack.contains(term.as_str()))
-                    .count();
-                (score > 0).then(|| SearchResult {
-                    note: note.clone(),
-                    score,
-                })
-            })
-            .collect();
-
-        results.sort_by(|a, b| {
-            b.score
-                .cmp(&a.score)
-                .then_with(|| a.note.path.cmp(&b.note.path))
-        });
-        results.truncate(limit);
-        results
-    }
-
-    pub fn context_bundle(&self, query: &str, limit: usize) -> ContextBundle {
-        ContextBundle {
-            query: query.to_string(),
-            sources: self.search(query, limit),
-        }
-    }
-}
-
-impl ContextBundle {
-    pub fn to_markdown(&self) -> String {
-        let mut out = format!("# Glassmind Context\n\nQuery: `{}`\n\n", self.query);
-        if self.sources.is_empty() {
-            out.push_str("No matching markdown notes were found.\n");
-            return out;
-        }
-
-        out.push_str("## Sources\n\n");
-        for (idx, result) in self.sources.iter().enumerate() {
-            out.push_str(&format!(
-                "{}. `{}` - score {}\n",
-                idx + 1,
-                result.note.path.display(),
-                result.score
-            ));
-            out.push_str(&format!("   - title: {}\n", result.note.title));
-            if !result.note.headings.is_empty() {
-                out.push_str(&format!(
-                    "   - headings: {}\n",
-                    result.note.headings.join(" > ")
-                ));
-            }
-            if !result.note.wikilinks.is_empty() {
-                let links = result
-                    .note
-                    .wikilinks
-                    .iter()
-                    .map(|link| match &link.alias {
-                        Some(alias) => format!("{} as {}", link.target, alias),
-                        None => link.target.clone(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push_str(&format!("   - wikilinks: {links}\n"));
-            }
-        }
-        out
     }
 }
 
@@ -343,15 +246,4 @@ fn is_markdown(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-}
-
-fn query_terms(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
-        .map(|term| {
-            term.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-        })
-        .filter(|term| !term.is_empty())
-        .collect()
 }

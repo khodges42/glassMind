@@ -418,7 +418,7 @@ Expose usable search interface.
 ```md id="5m9zsw"
 ## Embeddings
 
-### [ ] GM-021 — Create embedding backend trait
+### [x] GM-021 — Create embedding backend trait
 
 #### Goals
 Abstract embedding providers behind a common interface.
@@ -436,7 +436,7 @@ Abstract embedding providers behind a common interface.
 
 ---
 
-### [ ] GM-022 — Implement Ollama embedding backend
+### [x] GM-022 — Implement Ollama embedding backend
 
 #### Goals
 Generate embeddings locally using Ollama.
@@ -455,7 +455,7 @@ Generate embeddings locally using Ollama.
 
 ---
 
-### [ ] GM-023 — Add embedding generation pipeline
+### [x] GM-023 — Add embedding generation pipeline
 
 #### Goals
 Generate embeddings during indexing.
@@ -473,7 +473,7 @@ Generate embeddings during indexing.
 
 ---
 
-### [ ] GM-024 — Integrate sqlite-vec
+### [x] GM-024 — Integrate sqlite-vec
 
 #### Goals
 Store and search vectors locally.
@@ -491,7 +491,7 @@ Store and search vectors locally.
 
 ---
 
-### [ ] GM-025 — Implement semantic search
+### [x] GM-025 — Implement semantic search
 
 #### Goals
 Search by meaning instead of keywords.
@@ -511,7 +511,7 @@ Search by meaning instead of keywords.
 
 ## Hybrid Retrieval
 
-### [ ] GM-026 — Create retrieval scoring model
+### [x] GM-026 — Create retrieval scoring model
 
 #### Goals
 Combine multiple ranking systems.
@@ -531,7 +531,7 @@ Add weighted scoring for:
 
 ---
 
-### [ ] GM-027 — Add recency boosting
+### [x] GM-027 — Add recency boosting
 
 #### Goals
 Favor recently active notes.
@@ -548,7 +548,7 @@ Favor recently active notes.
 
 ---
 
-### [ ] GM-028 — Add wikilink graph weighting
+### [x] GM-028 — Add wikilink graph weighting
 
 #### Goals
 Use note relationships during retrieval.
@@ -565,7 +565,7 @@ Use note relationships during retrieval.
 
 ---
 
-### [ ] GM-029 — Add retrieval debug mode
+### [x] GM-029 — Add retrieval debug mode
 
 #### Goals
 Make ranking explainable.
@@ -587,7 +587,7 @@ Display:
 
 ## Context Bundles
 
-### [ ] GM-030 — Create context bundle builder
+### [x] GM-030 — Create context bundle builder
 
 #### Goals
 Generate LLM-ready retrieval payloads.
@@ -605,7 +605,7 @@ Generate LLM-ready retrieval payloads.
 
 ---
 
-### [ ] GM-031 — Add token budgeting
+### [x] GM-031 — Add token budgeting
 
 #### Goals
 Prevent oversized context payloads.
@@ -622,7 +622,7 @@ Prevent oversized context payloads.
 
 ---
 
-### [ ] GM-032 — Add context summarization hooks
+### [x] GM-032 — Add context summarization hooks
 
 #### Goals
 Prepare for future summarization support.
@@ -639,7 +639,7 @@ Prepare for future summarization support.
 
 ---
 
-### [ ] GM-033 — Implement `glassmind context`
+### [x] GM-033 — Implement `glassmind context`
 
 #### Goals
 Expose high-level retrieval workflow.
@@ -659,7 +659,7 @@ Expose high-level retrieval workflow.
 
 ## HTTP API
 
-### [ ] GM-034 — Add Axum server skeleton
+### [x] GM-034 — Add Axum server skeleton
 
 #### Goals
 Expose Glassmind over HTTP.
@@ -677,7 +677,7 @@ Expose Glassmind over HTTP.
 
 ---
 
-### [ ] GM-035 — Implement `/search` endpoint
+### [x] GM-035 — Implement `/search` endpoint
 
 #### Goals
 Expose search over HTTP.
@@ -695,7 +695,7 @@ Expose search over HTTP.
 
 ---
 
-### [ ] GM-036 — Implement `/context` endpoint
+### [x] GM-036 — Implement `/context` endpoint
 
 #### Goals
 Expose context retrieval API.
@@ -712,7 +712,7 @@ Expose context retrieval API.
 
 ---
 
-### [ ] GM-037 — Implement `/notes/{id}` endpoint
+### [x] GM-037 — Implement `/notes/{id}` endpoint
 
 #### Goals
 Allow direct note retrieval.
@@ -729,7 +729,7 @@ Allow direct note retrieval.
 
 ---
 
-### [ ] GM-038 — Add `/health` and `/stats`
+### [x] GM-038 — Add `/health` and `/stats`
 
 #### Goals
 Support monitoring/debugging.
@@ -748,7 +748,7 @@ Support monitoring/debugging.
 
 ## MCP Support
 
-### [ ] GM-039 — Create MCP server skeleton
+### [x] GM-039 — Create MCP server skeleton
 
 #### Goals
 Allow AI tools to call Glassmind directly.
@@ -765,7 +765,7 @@ Allow AI tools to call Glassmind directly.
 
 ---
 
-### [ ] GM-040 — Implement `glassmind_search` MCP tool
+### [x] GM-040 — Implement `glassmind_search` MCP tool
 
 #### Goals
 Expose search through MCP.
@@ -781,7 +781,7 @@ Expose search through MCP.
 
 ---
 
-### [ ] GM-041 — Implement `glassmind_context` MCP tool
+### [x] GM-041 — Implement `glassmind_context` MCP tool
 
 #### Goals
 Expose context bundles through MCP.
@@ -796,7 +796,7 @@ Expose context bundles through MCP.
 
 ---
 
-### [ ] GM-042 — Implement `glassmind_read` MCP tool
+### [x] GM-042 — Implement `glassmind_read` MCP tool
 
 #### Goals
 Allow agents to inspect notes directly.
@@ -812,7 +812,7 @@ Allow agents to inspect notes directly.
 
 ---
 
-### [ ] GM-043 — Add MCP integration examples
+### [x] GM-043 — Add MCP integration examples
 
 #### Goals
 Document real-world integration.
@@ -830,7 +830,7 @@ Document real-world integration.
 
 ## Incremental Indexing
 
-### [ ] GM-044 — Add file change detection
+### [x] GM-044 — Add file change detection
 
 #### Goals
 Avoid full vault reindexing.
@@ -847,7 +847,7 @@ Avoid full vault reindexing.
 
 ---
 
-### [ ] GM-045 — Add filesystem watch mode
+### [x] GM-045 — Add filesystem watch mode
 
 #### Goals
 Support live vault updates.
@@ -864,7 +864,7 @@ Support live vault updates.
 
 ---
 
-### [ ] GM-046 — Add partial embedding regeneration
+### [x] GM-046 — Add partial embedding regeneration
 
 #### Goals
 Avoid recomputing unchanged vectors.
@@ -882,7 +882,7 @@ Avoid recomputing unchanged vectors.
 
 ## Agent Workspace
 
-### [ ] GM-047 — Create `.agent/` workspace structure
+### [x] GM-047 — Create `.agent/` workspace structure
 
 #### Goals
 Establish safe agent-owned storage.
@@ -901,7 +901,7 @@ Create:
 
 ---
 
-### [ ] GM-048 — Add memory capture commands
+### [x] GM-048 — Add memory capture commands
 
 #### Goals
 Allow structured memory persistence.
@@ -920,7 +920,7 @@ Store entries as markdown.
 
 ---
 
-### [ ] GM-049 — Index `.agent/` content
+### [x] GM-049 — Index `.agent/` content
 
 #### Goals
 Allow generated memory retrieval.
@@ -936,7 +936,7 @@ Allow generated memory retrieval.
 
 ---
 
-### [ ] GM-050 — Add retrieval audit logging
+### [x] GM-050 — Add retrieval audit logging
 
 #### Goals
 Track retrieval behavior for debugging.

@@ -36,12 +36,20 @@ pub enum Commands {
         /// Emit JSON instead of text.
         #[arg(long)]
         json: bool,
+        /// Generate missing embeddings after writing chunks.
+        #[arg(long)]
+        embeddings: bool,
+        /// Poll and reindex the vault every few seconds.
+        #[arg(long)]
+        watch: bool,
     },
     /// Search the current markdown vault with lightweight local matching.
     Search {
         query: String,
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
+        #[arg(long)]
+        debug_scores: bool,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
@@ -50,17 +58,62 @@ pub enum Commands {
         query: String,
         #[arg(short, long, default_value_t = 5)]
         limit: usize,
+        #[arg(long, default_value_t = 6000)]
+        budget: usize,
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
     /// Start the future localhost HTTP API.
     Serve,
+    /// Print simple MCP tool metadata.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+    /// Append generated markdown into the agent-owned workspace.
+    Capture {
+        #[command(subcommand)]
+        kind: CaptureKind,
+    },
     /// Show vault scan metrics.
     Stats {
         /// Emit JSON instead of text.
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum McpCommand {
+    Tools,
+    Search {
+        query: String,
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
+    Context {
+        query: String,
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+    },
+    Read {
+        path: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CaptureKind {
+    Memory(CaptureArgs),
+    Task(CaptureArgs),
+    Decision(CaptureArgs),
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct CaptureArgs {
+    #[arg(long, default_value = "general")]
+    pub project: String,
+    #[arg(long)]
+    pub text: String,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
