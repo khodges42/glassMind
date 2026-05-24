@@ -1,14 +1,15 @@
 # Glassmind
 
-![Glassmind logo](docs/images/logo.png)
-
 > Local-first retrieval for Obsidian-like markdown knowledge bases and AI workflows.
 
 Glassmind turns a folder of markdown notes into searchable local memory for humans, agents, and local model workflows.
 
 It works well with Obsidian vaults, but Obsidian is not required. A plain directory of `.md` files is enough.
-
 Your notes stay local. Markdown stays canonical. The SQLite database is a rebuildable cache.
+
+
+![Glassmind logo](docs/images/logo.png)
+
 
 ## Current Status
 
