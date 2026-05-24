@@ -1,0 +1,33 @@
+[vault]
+path = "."
+
+[index]
+include_agent_dir = true
+ignore_dirs = [
+    ".git",
+    ".obsidian",
+    ".trash",
+    ".agent/cache",
+]
+chunk_target_tokens = 500
+chunk_overlap_tokens = 80
+
+[embeddings]
+backend = "ollama"
+model = "nomic-embed-text"
+url = "http://localhost:11434"
+
+[search]
+semantic_weight = 0.55
+keyword_weight = 0.25
+recency_weight = 0.1
+link_weight = 0.05
+tag_weight = 0.05
+
+[writes]
+mode = "agent-only"
+agent_dir = ".agent"
+
+[server]
+host = "127.0.0.1"
+port = 7331
