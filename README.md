@@ -1,5 +1,7 @@
 # Glassmind
 
+![Glassmind logo](docs/images/logo.png)
+
 > Local-first retrieval for Obsidian-like markdown knowledge bases and AI workflows.
 
 Glassmind turns a folder of markdown notes into searchable local memory for humans, agents, and local model workflows.
