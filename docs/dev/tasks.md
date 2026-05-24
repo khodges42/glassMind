@@ -232,7 +232,7 @@ Store:
 
 ---
 
-## [ ] GM-011 — Extract tags
+## [x] GM-011 — Extract tags
 
 ### Goals
 Parse tags from notes.
@@ -254,7 +254,7 @@ Normalize:
 
 # Phase 3 — Database Layer
 
-## [ ] GM-012 — Add SQLite integration
+## [x] GM-012 — Add SQLite integration
 
 ### Goals
 Create local metadata database.
@@ -271,7 +271,7 @@ Create local metadata database.
 
 ---
 
-## [ ] GM-013 — Create notes table
+## [x] GM-013 — Create notes table
 
 ### Goals
 Store note metadata.
@@ -289,7 +289,7 @@ Create schema for:
 
 ---
 
-## [ ] GM-014 — Create chunks table
+## [x] GM-014 — Create chunks table
 
 ### Goals
 Store retrieval chunks.
@@ -308,7 +308,7 @@ Store:
 
 ---
 
-## [ ] GM-015 — Add content hashing
+## [x] GM-015 — Add content hashing
 
 ### Goals
 Detect changed notes efficiently.

@@ -9,6 +9,7 @@ use tracing::{debug, warn};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::config::Config;
+use crate::db::sha256_hex;
 use crate::markdown::{MarkdownBlock, Wikilink, parse_markdown};
 
 #[derive(Clone, Debug, Serialize)]
@@ -26,9 +27,11 @@ pub struct NoteMetadata {
     pub title: String,
     pub modified_unix_secs: Option<u64>,
     pub file_size: u64,
+    pub content_hash: String,
     pub headings: Vec<String>,
     pub blocks: Vec<MarkdownBlock>,
     pub wikilinks: Vec<Wikilink>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -39,7 +42,19 @@ pub struct IndexSummary {
     pub headings: usize,
     pub blocks: usize,
     pub wikilinks: usize,
+    pub tags: usize,
     pub skipped_dirs: Vec<PathBuf>,
+    pub writes: Option<IndexWriteSummary>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct IndexWriteSummary {
+    pub notes_seen: usize,
+    pub changed_notes: usize,
+    pub unchanged_notes: usize,
+    pub chunks_written: usize,
+    pub tags_seen: usize,
+    pub links_written: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -115,7 +130,16 @@ impl VaultIndex {
             headings: self.notes.iter().map(|note| note.headings.len()).sum(),
             blocks: self.notes.iter().map(|note| note.blocks.len()).sum(),
             wikilinks: self.notes.iter().map(|note| note.wikilinks.len()).sum(),
+            tags: self.notes.iter().map(|note| note.tags.len()).sum(),
             skipped_dirs: self.skipped_dirs.clone(),
+            writes: None,
+        }
+    }
+
+    pub fn summary_with_writes(&self, writes: IndexWriteSummary) -> IndexSummary {
+        IndexSummary {
+            writes: Some(writes),
+            ..self.summary()
         }
     }
 
@@ -213,7 +237,14 @@ impl fmt::Display for IndexSummary {
         writeln!(f, "Headings parsed: {}", self.headings)?;
         writeln!(f, "Markdown blocks: {}", self.blocks)?;
         writeln!(f, "Wikilinks: {}", self.wikilinks)?;
-        writeln!(f, "Skipped dirs: {}", self.skipped_dirs.len())
+        writeln!(f, "Tags: {}", self.tags)?;
+        writeln!(f, "Skipped dirs: {}", self.skipped_dirs.len())?;
+        if let Some(writes) = &self.writes {
+            writeln!(f, "Changed notes: {}", writes.changed_notes)?;
+            writeln!(f, "Unchanged notes skipped: {}", writes.unchanged_notes)?;
+            writeln!(f, "Chunks written: {}", writes.chunks_written)?;
+        }
+        Ok(())
     }
 }
 
@@ -225,6 +256,7 @@ fn read_note(path: &Path, vault_path: &Path) -> Result<NoteMetadata> {
     let relative_path = path.strip_prefix(vault_path).unwrap_or(path).to_path_buf();
     let source_path = relative_path.to_string_lossy().replace('\\', "/");
     let parsed = parse_markdown(&source_path, &content);
+    let content_hash = sha256_hex(&content);
 
     Ok(NoteMetadata {
         path: relative_path,
@@ -240,9 +272,11 @@ fn read_note(path: &Path, vault_path: &Path) -> Result<NoteMetadata> {
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs()),
         file_size: metadata.len(),
+        content_hash,
         headings: parsed.headings,
         blocks: parsed.blocks,
         wikilinks: parsed.wikilinks,
+        tags: parsed.tags,
     })
 }
 

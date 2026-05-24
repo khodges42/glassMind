@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub vault: VaultConfig,
+    pub database: DatabaseConfig,
     pub index: IndexConfig,
     pub embeddings: EmbeddingsConfig,
     pub search: SearchConfig,
@@ -16,6 +17,11 @@ pub struct Config {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VaultConfig {
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DatabaseConfig {
     pub path: PathBuf,
 }
 
@@ -93,6 +99,9 @@ impl Config {
         if self.server.port == 0 {
             bail!("server.port must be greater than zero");
         }
+        if self.database.path.as_os_str().is_empty() {
+            bail!("database.path must not be empty");
+        }
         match self.writes.mode.as_str() {
             "off" | "agent-only" | "propose" | "allow" => {}
             other => {
@@ -137,6 +146,9 @@ impl Default for Config {
         Self {
             vault: VaultConfig {
                 path: PathBuf::from("."),
+            },
+            database: DatabaseConfig {
+                path: PathBuf::from(".agent/cache/glassmind.sqlite3"),
             },
             index: IndexConfig {
                 include_agent_dir: true,

@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod db;
 mod logging;
 mod markdown;
 mod vault;
@@ -10,6 +11,7 @@ use tracing::{debug, info};
 
 use crate::cli::{Cli, Commands, OutputFormat};
 use crate::config::Config;
+use crate::db::IndexStore;
 use crate::vault::VaultIndex;
 
 fn main() -> Result<()> {
@@ -25,10 +27,16 @@ fn main() -> Result<()> {
         Commands::Init { force } => init_project(&config, force),
         Commands::Index { json } => {
             let index = VaultIndex::scan(&config)?;
+            config.create_agent_dirs()?;
+            // Indexing writes the rebuildable cache, while search can still scan live markdown.
+            let db_path = config.vault.path.join(&config.database.path);
+            let mut store = IndexStore::open(&db_path)?;
+            let writes = store.write_index(&index)?;
+            let summary = index.summary_with_writes(writes);
             if json {
-                println!("{}", serde_json::to_string_pretty(&index.summary())?);
+                println!("{}", serde_json::to_string_pretty(&summary)?);
             } else {
-                println!("{}", index.summary());
+                println!("{summary}");
             }
             Ok(())
         }

@@ -1,6 +1,9 @@
 [vault]
 path = "."
 
+[database]
+path = ".agent/cache/glassmind.sqlite3"
+
 [index]
 include_agent_dir = true
 ignore_dirs = [
