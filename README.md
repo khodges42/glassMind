@@ -1,228 +1,332 @@
 # Glassmind
 
-> Local-first semantic retrieval for Obsidian-like markdown knowledge bases and AI workflows.
+> Local-first retrieval for Obsidian-like markdown knowledge bases and AI workflows.
 
-* This is in development, it doesn't run yet. Want to help? Get in contact! * 
+Glassmind turns a folder of markdown notes into searchable local memory for humans, agents, and local model workflows.
 
-Glassmind turns folders of markdown notes into searchable semantic memory for AI tools and humans.
+It works well with Obsidian vaults, but Obsidian is not required. A plain directory of `.md` files is enough.
 
-It works especially well with Obsidian vaults, but Obsidian is not required.
+Your notes stay local. Markdown stays canonical. The SQLite database is a rebuildable cache.
 
-It indexes markdown, understands links/tags/headings, performs hybrid semantic retrieval, and exposes context through a CLI, HTTP API, and MCP tools.
+## Current Status
 
-Your notes stay local.
-Your vault stays canonical.
-The database is rebuildable.
-No cloud required.
+Glassmind now runs as a Rust CLI MVP.
 
----
+It can:
 
-## What is this?
+- scan a markdown vault
+- parse headings, paragraphs, lists, code blocks, tags, and wikilinks
+- split notes into heading-based retrieval chunks
+- store metadata and chunks in SQLite
+- index chunks with SQLite FTS5 keyword search
+- generate local deterministic embeddings
+- score results with keyword, semantic, recency, tag, and wikilink signals
+- build context bundles with token budgets
+- expose a small localhost HTTP API
+- expose MCP-style command output
+- write agent-owned memories, tasks, and decisions under `.agent/`
+- skip unchanged files with content hashes
+- audit retrievals for debugging
 
-Glassmind is **not**:
+Some pieces are still intentionally lightweight:
 
-* a chatbot
-* an obsidian plugin
-* an autonomous agent
-* a replacement for Obsidian
-* a SaaS startup trying to ingest your second brain into a valuation event
+- the Ollama backend has the right interface, but does not call Ollama over HTTP yet
+- vectors are stored as JSON in SQLite, not native `sqlite-vec` yet
+- the HTTP server is a small standard-library server, not Axum yet
+- MCP support is command-shaped, not a full MCP protocol server yet
+- watch mode is simple polling
 
-Glassmind is a **memory and retrieval layer**.
+The core local retrieval flow is in place and usable for testing.
 
-Think:
+## What Glassmind Is
+
+Glassmind is not:
+
+- a chatbot
+- an Obsidian plugin
+- an autonomous agent
+- a replacement for Obsidian
+- a cloud memory service
+
+Glassmind is a memory and retrieval layer.
 
 ```text
-Claude / Codex / Hermes / local model
-                ↓
+Claude / Codex / local model / your tooling
+                |
            Glassmind
-                ↓
-         Your Obsidian vault
+                |
+       your markdown vault
 ```
 
 The goal is simple:
 
-> “Given this task, what context from my vault actually matters?”
+> Given this task, what context from my vault actually matters?
 
----
+## Quick Start
 
-# Features
+Build it:
 
-## Current / Planned
+```powershell
+cargo build
+```
 
-* Markdown vault indexing
-* Semantic search
-* Hybrid retrieval
+Index the current repo:
 
-  * embeddings
-  * keyword search
-  * tags
-  * wikilinks
-  * recency
-* Context bundle generation
-* MCP integration
-* HTTP API
-* Local-first operation
-* Rebuildable indexes
-* Incremental indexing
-* Agent-safe `.agent/` workspace
-* Obsidian-compatible by default
+```powershell
+cargo run -- index --embeddings
+```
 
----
+Search:
 
-# Philosophy
+```powershell
+cargo run -- search "local memory" --debug-scores
+```
 
-Glassmind treats your vault like memory, not files.
+Build a context bundle:
+
+```powershell
+cargo run -- context "continue glassmind" --budget 3000
+```
+
+Use a personal Obsidian vault:
+
+```powershell
+cargo run -- --vault "E:\notes\Brain" index --embeddings
+cargo run -- --vault "E:\notes\Brain" search "project ideas" --debug-scores
+cargo run -- --vault "E:\notes\Brain" context "what was I thinking about local agents?"
+```
+
+If your vault path has spaces, keep the quotes.
+
+## Configuration
+
+Glassmind reads `glassmind.toml` by default.
+
+Useful defaults:
+
+```toml
+[vault]
+path = "."
+
+[database]
+path = ".agent/cache/glassmind.sqlite3"
+
+[index]
+include_agent_dir = true
+ignore_dirs = [".git", ".obsidian", ".trash", ".agent/cache"]
+chunk_target_tokens = 500
+chunk_overlap_tokens = 80
+
+[embeddings]
+backend = "ollama"
+model = "nomic-embed-text"
+url = "http://localhost:11434"
+
+[server]
+host = "127.0.0.1"
+port = 7331
+```
+
+The database path is inside `.agent/cache` so it stays out of Git and can be rebuilt.
+
+## CLI Commands
+
+Initialize config and agent workspace:
+
+```powershell
+cargo run -- init
+```
+
+Index once:
+
+```powershell
+cargo run -- index
+```
+
+Index and generate missing embeddings:
+
+```powershell
+cargo run -- index --embeddings
+```
+
+Poll and reindex every five seconds:
+
+```powershell
+cargo run -- index --watch
+```
+
+Search:
+
+```powershell
+cargo run -- search "obsidian rag memory"
+```
+
+Search with score breakdown:
+
+```powershell
+cargo run -- search "obsidian rag memory" --debug-scores
+```
+
+JSON search:
+
+```powershell
+cargo run -- search "obsidian rag memory" --output json
+```
+
+Context bundle:
+
+```powershell
+cargo run -- context "help me continue the Glassmind project" --budget 6000
+```
+
+Stats:
+
+```powershell
+cargo run -- stats
+```
+
+## Agent Memory
+
+Glassmind owns `.agent/`.
 
 ```text
-Obsidian markdown = source of truth
-SQLite = rebuildable index/cache
-Embeddings = semantic retrieval layer
+.agent/
+  memories/
+  summaries/
+  tasks/
+  decisions/
+  logs/
+  cache/
 ```
 
-Your notes remain human-readable markdown.
+Capture generated memory:
 
-Glassmind exists to make retrieval useful, fast, and agent-friendly without turning your vault into proprietary soup.
-
----
-
-# Example
-
-```bash
-glassmind index
-
-glassmind search "local memory tool ideas"
-
-glassmind context "help me continue the Glassmind project"
-
-glassmind serve
+```powershell
+cargo run -- capture memory --project Glassmind --text "Markdown remains canonical."
+cargo run -- capture task --project Glassmind --text "Wire real Ollama HTTP embeddings."
+cargo run -- capture decision --project Glassmind --text "SQLite is rebuildable cache."
 ```
 
----
+Those files are markdown and are indexed on the next run.
 
-# Why?
+## HTTP API
 
-Because existing “AI memory” systems tend to be one of:
+Start the local server:
 
-* cloud-first
-* opaque
-* startup-shaped
-* agent-shaped
-* overengineered
-* weirdly hostile to user ownership
+```powershell
+cargo run -- serve
+```
 
-Meanwhile, many of us are already using Obsidian as informal long-term memory.
-
-Glassmind formalizes that idea.
-
----
-
-# Documentation
-
-* [Design Document](docs/design.md)
-* [FAQ](docs/faq.md)
-* [HUH? (Beginners ELI5 guide)](docs/huh.md)
-
----
-
-# Architecture
+Default bind:
 
 ```text
-Obsidian Vault
-  ↓
-Indexer
-  ↓
-SQLite + Vector Search
-  ↓
-CLI / HTTP / MCP
-  ↓
-Agents and local models
+127.0.0.1:7331
 ```
 
----
+Endpoints:
 
-# Tech Stack
+- `GET /health`
+- `GET /stats`
+- `POST /search`
+- `POST /context`
+- `GET /notes/{path}`
 
-Planned v1 stack:
+Example:
+
+```powershell
+curl http://127.0.0.1:7331/health
+```
+
+## MCP-Style Commands
+
+List tools:
+
+```powershell
+cargo run -- mcp tools
+```
+
+Search:
+
+```powershell
+cargo run -- mcp search "local memory"
+```
+
+Context:
+
+```powershell
+cargo run -- mcp context "continue glassmind"
+```
+
+Read:
+
+```powershell
+cargo run -- mcp read "README.md"
+```
+
+## Architecture
 
 ```text
-Rust
-SQLite
-sqlite-vec
-Ollama embeddings
-Axum
-MCP
+Markdown vault
+  -> scanner
+  -> parser
+  -> heading chunker
+  -> SQLite metadata cache
+  -> FTS keyword index
+  -> embedding cache
+  -> hybrid retriever
+  -> CLI / HTTP / MCP-style tools
 ```
 
----
+Core principle:
 
-# Status
+```text
+markdown = source of truth
+sqlite = rebuildable cache
+embeddings = derived retrieval data
+.agent/ = Glassmind-owned workspace
+```
 
-Early development.
+## Documentation
 
-Currently building:
+- [Design Document](docs/design.md)
+- [FAQ](docs/faq.md)
+- [HUH? Beginners Guide](docs/huh.md)
+- [Technical Explainer](docs/technical-explainer.md)
 
-* vault indexer
-* chunking
-* semantic retrieval
-* context generation
-
----
-
-# Security / Privacy
-
-Glassmind is designed to run locally.
+## Security And Privacy
 
 By default:
 
-* binds to localhost
-* keeps notes local
-* avoids modifying user notes
-* stores indexes separately
-* treats markdown as canonical
+- runs locally
+- binds HTTP to localhost
+- keeps notes on disk
+- avoids modifying normal user notes
+- writes generated data under `.agent/`
+- stores indexes under `.agent/cache`
+- does not require cloud APIs
+- has no telemetry
 
-No telemetry is planned.
+## Tech Stack
 
-No cloud dependency is required.
+Current:
 
-No “AI-enhanced knowledge monetization platform” nonsense.
+- Rust
+- SQLite
+- SQLite FTS5
+- `rusqlite`
+- `clap`
+- `serde`
+- `pulldown-cmark`
+- `tracing`
 
-No enshitification ever. I stake my professional reputation on it.
+Planned improvements:
 
----
+- real Ollama HTTP embeddings
+- native `sqlite-vec`
+- Axum HTTP server
+- full MCP transport
+- filesystem watcher
 
-# Name
+## Legal
 
-Why “Glassmind”?
-
-Because it’s supposed to feel like peering through semantic glass into your own thoughts.
-
-Also because `brainworm` felt a little aggressive for a tool people may actually deploy at work. 
-
-
----
-
-# Contributing
-
-Eventually.
-
-Right now the project is still in the “rapid architectural mutation” phase.
-
-If you want to throw me a PR or two I'll give you one (1) really good compliment.
-
----
-
-# Legal
-
-Glassmind is an independent project and is not affiliated with or endorsed by [Obsidian](https://obsidian.md).
-
----
-
-# I am a recruiter
-
-Hi.
-
-You may also enjoy:
-
-* [LinkedIn / khodges42](https://linkedin.com/in/khodges42?utm_source=chatgpt.com)
-
-
+Glassmind is an independent project and is not affiliated with or endorsed by Obsidian.
