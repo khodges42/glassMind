@@ -8,6 +8,7 @@ use serde::Serialize;
 use tracing::{debug, warn};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::chunk::{NoteChunk, build_chunks};
 use crate::config::Config;
 use crate::db::sha256_hex;
 use crate::markdown::{MarkdownBlock, Wikilink, parse_markdown};
@@ -30,6 +31,7 @@ pub struct NoteMetadata {
     pub content_hash: String,
     pub headings: Vec<String>,
     pub blocks: Vec<MarkdownBlock>,
+    pub chunks: Vec<NoteChunk>,
     pub wikilinks: Vec<Wikilink>,
     pub tags: Vec<String>,
 }
@@ -41,6 +43,7 @@ pub struct IndexSummary {
     pub markdown_files: usize,
     pub headings: usize,
     pub blocks: usize,
+    pub chunks: usize,
     pub wikilinks: usize,
     pub tags: usize,
     pub skipped_dirs: Vec<PathBuf>,
@@ -99,7 +102,7 @@ impl VaultIndex {
                 continue;
             }
 
-            let note = read_note(entry.path(), &config.vault.path)?;
+            let note = read_note(entry.path(), &config.vault.path, config)?;
             debug!(
                 path = %note.path.display(),
                 title = %note.title,
@@ -129,6 +132,7 @@ impl VaultIndex {
             markdown_files: self.markdown_count,
             headings: self.notes.iter().map(|note| note.headings.len()).sum(),
             blocks: self.notes.iter().map(|note| note.blocks.len()).sum(),
+            chunks: self.notes.iter().map(|note| note.chunks.len()).sum(),
             wikilinks: self.notes.iter().map(|note| note.wikilinks.len()).sum(),
             tags: self.notes.iter().map(|note| note.tags.len()).sum(),
             skipped_dirs: self.skipped_dirs.clone(),
@@ -236,6 +240,7 @@ impl fmt::Display for IndexSummary {
         writeln!(f, "Markdown files: {}", self.markdown_files)?;
         writeln!(f, "Headings parsed: {}", self.headings)?;
         writeln!(f, "Markdown blocks: {}", self.blocks)?;
+        writeln!(f, "Chunks: {}", self.chunks)?;
         writeln!(f, "Wikilinks: {}", self.wikilinks)?;
         writeln!(f, "Tags: {}", self.tags)?;
         writeln!(f, "Skipped dirs: {}", self.skipped_dirs.len())?;
@@ -248,7 +253,7 @@ impl fmt::Display for IndexSummary {
     }
 }
 
-fn read_note(path: &Path, vault_path: &Path) -> Result<NoteMetadata> {
+fn read_note(path: &Path, vault_path: &Path, config: &Config) -> Result<NoteMetadata> {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let metadata =
@@ -256,6 +261,11 @@ fn read_note(path: &Path, vault_path: &Path) -> Result<NoteMetadata> {
     let relative_path = path.strip_prefix(vault_path).unwrap_or(path).to_path_buf();
     let source_path = relative_path.to_string_lossy().replace('\\', "/");
     let parsed = parse_markdown(&source_path, &content);
+    let chunks = build_chunks(
+        &parsed.blocks,
+        config.index.chunk_target_tokens,
+        config.index.chunk_overlap_tokens,
+    );
     let content_hash = sha256_hex(&content);
 
     Ok(NoteMetadata {
@@ -275,6 +285,7 @@ fn read_note(path: &Path, vault_path: &Path) -> Result<NoteMetadata> {
         content_hash,
         headings: parsed.headings,
         blocks: parsed.blocks,
+        chunks,
         wikilinks: parsed.wikilinks,
         tags: parsed.tags,
     })

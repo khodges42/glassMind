@@ -6,11 +6,23 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
-use crate::markdown::MarkdownBlockKind;
+use crate::chunk::chunk_type_name;
 use crate::vault::{IndexWriteSummary, NoteMetadata, VaultIndex};
+
+const INDEX_VERSION: i64 = 2;
 
 pub struct IndexStore {
     conn: Connection,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SearchHit {
+    pub path: String,
+    pub title: String,
+    pub heading_path: String,
+    pub snippet: String,
+    pub score: f64,
+    pub token_estimate: usize,
 }
 
 impl IndexStore {
@@ -34,8 +46,8 @@ impl IndexStore {
         // This is a rebuildable cache, so changed notes get their child rows replaced in place.
         for note in &index.notes {
             summary.notes_seen += 1;
-            let existing_hash = existing_note_hash(&tx, &note.path)?;
-            if existing_hash.as_deref() == Some(note.content_hash.as_str()) {
+            let fresh = existing_note_fresh(&tx, &note.path, &note.content_hash)?;
+            if fresh {
                 summary.unchanged_notes += 1;
                 debug!(path = %note.path.display(), "skipping unchanged note");
                 continue;
@@ -49,8 +61,49 @@ impl IndexStore {
             insert_links(&tx, note_id, note, &mut summary)?;
         }
 
+        rebuild_fts_if_empty(&tx)?;
         tx.commit()?;
         Ok(summary)
+    }
+
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let fts_query = fts_query(query);
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT
+                notes.path,
+                notes.title,
+                chunks.heading_path,
+                snippet(chunks_fts, 0, '[', ']', '...', 18) AS snippet,
+                bm25(chunks_fts) AS score,
+                chunks.token_estimate
+            FROM chunks_fts
+            JOIN chunks ON chunks.id = chunks_fts.rowid
+            JOIN notes ON notes.id = chunks.note_id
+            WHERE chunks_fts MATCH ?1
+            ORDER BY score
+            LIMIT ?2
+            "#,
+        )?;
+
+        let hits = stmt
+            .query_map(params![fts_query, limit as i64], |row| {
+                Ok(SearchHit {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    heading_path: row.get(2)?,
+                    snippet: row.get(3)?,
+                    score: -row.get::<_, f64>(4)?,
+                    token_estimate: row.get::<_, i64>(5)? as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(hits)
     }
 
     fn bootstrap(&self) -> Result<()> {
@@ -72,6 +125,7 @@ impl IndexStore {
                 modified_unix_secs INTEGER,
                 file_size INTEGER NOT NULL,
                 content_hash TEXT NOT NULL,
+                index_version INTEGER NOT NULL DEFAULT 2,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -89,6 +143,14 @@ impl IndexStore {
                 content_hash TEXT NOT NULL,
                 FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
                 UNIQUE(note_id, chunk_index)
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
+            USING fts5(
+                content,
+                path UNINDEXED,
+                title UNINDEXED,
+                heading_path UNINDEXED
             );
 
             CREATE TABLE IF NOT EXISTS tags (
@@ -116,18 +178,39 @@ impl IndexStore {
             INSERT OR IGNORE INTO migrations (id, name) VALUES (1, 'initial_metadata_index');
             "#,
         )?;
+        ensure_notes_index_version(&self.conn)?;
         Ok(())
     }
 }
 
-fn existing_note_hash(conn: &Connection, path: &Path) -> Result<Option<String>> {
-    conn.query_row(
-        "SELECT content_hash FROM notes WHERE path = ?1",
-        [path_to_db(path)],
-        |row| row.get(0),
-    )
-    .optional()
-    .context("failed to read existing note hash")
+fn existing_note_fresh(conn: &Connection, path: &Path, content_hash: &str) -> Result<bool> {
+    let existing = conn
+        .query_row(
+            "SELECT content_hash, index_version FROM notes WHERE path = ?1",
+            [path_to_db(path)],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .context("failed to read existing note freshness")?;
+
+    Ok(existing.is_some_and(|(hash, version)| hash == content_hash && version == INDEX_VERSION))
+}
+
+fn ensure_notes_index_version(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !columns.iter().any(|column| column == "index_version") {
+        conn.execute(
+            "ALTER TABLE notes ADD COLUMN index_version INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .context("failed to add notes.index_version")?;
+    }
+
+    Ok(())
 }
 
 fn upsert_note(conn: &Connection, note: &NoteMetadata) -> Result<i64> {
@@ -140,15 +223,17 @@ fn upsert_note(conn: &Connection, note: &NoteMetadata) -> Result<i64> {
             modified_unix_secs,
             file_size,
             content_hash,
+            index_version,
             updated_at
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
         ON CONFLICT(path) DO UPDATE SET
             filename = excluded.filename,
             title = excluded.title,
             modified_unix_secs = excluded.modified_unix_secs,
             file_size = excluded.file_size,
             content_hash = excluded.content_hash,
+            index_version = excluded.index_version,
             updated_at = CURRENT_TIMESTAMP
         "#,
         params![
@@ -158,6 +243,7 @@ fn upsert_note(conn: &Connection, note: &NoteMetadata) -> Result<i64> {
             note.modified_unix_secs,
             note.file_size,
             note.content_hash,
+            INDEX_VERSION,
         ],
     )?;
 
@@ -170,6 +256,7 @@ fn upsert_note(conn: &Connection, note: &NoteMetadata) -> Result<i64> {
 }
 
 fn clear_note_children(conn: &Connection, note_id: i64) -> Result<()> {
+    delete_note_fts(conn, note_id)?;
     conn.execute("DELETE FROM chunks WHERE note_id = ?1", [note_id])?;
     conn.execute("DELETE FROM note_tags WHERE note_id = ?1", [note_id])?;
     conn.execute("DELETE FROM links WHERE source_note_id = ?1", [note_id])?;
@@ -182,8 +269,8 @@ fn insert_chunks(
     note: &NoteMetadata,
     summary: &mut IndexWriteSummary,
 ) -> Result<()> {
-    for (idx, block) in note.blocks.iter().enumerate() {
-        if block.text.trim().is_empty() {
+    for chunk in &note.chunks {
+        if chunk.content.trim().is_empty() {
             continue;
         }
 
@@ -204,18 +291,70 @@ fn insert_chunks(
             "#,
             params![
                 note_id,
-                idx as i64,
-                block.heading_path.join(" > "),
-                block.text,
-                chunk_type(&block.kind),
-                block.start_line as i64,
-                block.end_line as i64,
-                estimate_tokens(&block.text) as i64,
-                sha256_hex(&block.text),
+                chunk.index as i64,
+                chunk.heading_path.join(" > "),
+                chunk.content,
+                chunk_type_name(&chunk.chunk_type),
+                chunk.start_line as i64,
+                chunk.end_line as i64,
+                chunk.token_estimate as i64,
+                chunk.content_hash,
             ],
         )?;
+        let chunk_id = conn.last_insert_rowid();
+        insert_chunk_fts(conn, chunk_id, note, chunk)?;
         summary.chunks_written += 1;
     }
+    Ok(())
+}
+
+fn insert_chunk_fts(
+    conn: &Connection,
+    chunk_id: i64,
+    note: &NoteMetadata,
+    chunk: &crate::chunk::NoteChunk,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO chunks_fts (rowid, content, path, title, heading_path) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            chunk_id,
+            chunk.content,
+            path_to_db(&note.path),
+            note.title,
+            chunk.heading_path.join(" > "),
+        ],
+    )?;
+    Ok(())
+}
+
+fn delete_note_fts(conn: &Connection, note_id: i64) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT id FROM chunks WHERE note_id = ?1")?;
+    let chunk_ids = stmt
+        .query_map([note_id], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for chunk_id in chunk_ids {
+        conn.execute("DELETE FROM chunks_fts WHERE rowid = ?1", [chunk_id])?;
+    }
+    Ok(())
+}
+
+fn rebuild_fts_if_empty(conn: &Connection) -> Result<()> {
+    let fts_count: i64 = conn.query_row("SELECT count(*) FROM chunks_fts", [], |row| row.get(0))?;
+    let chunk_count: i64 = conn.query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))?;
+    if fts_count > 0 || chunk_count == 0 {
+        return Ok(());
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO chunks_fts (rowid, content, path, title, heading_path)
+        SELECT chunks.id, chunks.content, notes.path, notes.title, chunks.heading_path
+        FROM chunks
+        JOIN notes ON notes.id = chunks.note_id
+        "#,
+        [],
+    )?;
     Ok(())
 }
 
@@ -259,19 +398,16 @@ pub fn sha256_hex(content: &str) -> String {
     format!("{:x}", Sha256::digest(content.as_bytes()))
 }
 
-fn estimate_tokens(content: &str) -> usize {
-    content.split_whitespace().count().max(1)
-}
-
-fn chunk_type(kind: &MarkdownBlockKind) -> &'static str {
-    match kind {
-        MarkdownBlockKind::Heading => "heading",
-        MarkdownBlockKind::Paragraph => "paragraph",
-        MarkdownBlockKind::CodeBlock => "code_block",
-        MarkdownBlockKind::List => "list",
-    }
-}
-
 fn path_to_db(path: &Path) -> String {
     PathBuf::from(path).to_string_lossy().replace('\\', "/")
+}
+
+fn fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|term| term.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '-'))
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

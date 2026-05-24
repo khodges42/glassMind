@@ -327,7 +327,7 @@ Detect changed notes efficiently.
 
 # Phase 4 — Chunking
 
-## [ ] GM-016 — Implement heading-based chunking
+## [x] GM-016 — Implement heading-based chunking
 
 ### Goals
 Split notes into useful retrieval units.
@@ -344,7 +344,7 @@ Split notes into useful retrieval units.
 
 ---
 
-## [ ] GM-017 — Add fallback chunk splitting
+## [x] GM-017 — Add fallback chunk splitting
 
 ### Goals
 Handle giant sections safely.
@@ -360,7 +360,7 @@ Handle giant sections safely.
 
 ---
 
-## [ ] GM-018 — Estimate token counts
+## [x] GM-018 — Estimate token counts
 
 ### Goals
 Prepare for LLM context budgeting.
@@ -378,7 +378,7 @@ Prepare for LLM context budgeting.
 
 # Phase 5 — Search
 
-## [ ] GM-019 — Implement SQLite FTS search
+## [x] GM-019 — Implement SQLite FTS search
 
 ### Goals
 Add keyword search.
@@ -396,7 +396,7 @@ Add keyword search.
 
 ---
 
-## [ ] GM-020 — Implement basic CLI search command
+## [x] GM-020 — Implement basic CLI search command
 
 ### Goals
 Expose usable search interface.

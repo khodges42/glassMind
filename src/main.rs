@@ -1,3 +1,4 @@
+mod chunk;
 mod cli;
 mod config;
 mod db;
@@ -11,7 +12,7 @@ use tracing::{debug, info};
 
 use crate::cli::{Cli, Commands, OutputFormat};
 use crate::config::Config;
-use crate::db::IndexStore;
+use crate::db::{IndexStore, SearchHit};
 use crate::vault::VaultIndex;
 
 fn main() -> Result<()> {
@@ -54,21 +55,15 @@ fn main() -> Result<()> {
             limit,
             output,
         } => {
-            let index = VaultIndex::scan(&config)?;
-            let results = index.search(&query, limit);
+            let db_path = ensure_index_cache(&config)?;
+            let store = IndexStore::open(&db_path)?;
+            let results = store.search(&query, limit)?;
             match output {
                 OutputFormat::Text => {
                     if results.is_empty() {
                         println!("No matches.");
                     }
-                    for (position, result) in results.iter().enumerate() {
-                        println!("{}. {}", position + 1, result.note.path.display());
-                        println!("   title: {}", result.note.title);
-                        if !result.note.headings.is_empty() {
-                            println!("   headings: {}", result.note.headings.join(" > "));
-                        }
-                        println!("   score: {}", result.score);
-                    }
+                    print_search_results(&results);
                 }
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&results)?),
             }
@@ -104,4 +99,30 @@ fn init_project(config: &Config, force: bool) -> Result<()> {
     println!("Initialized Glassmind at {}", config.vault.path.display());
     println!("Config: {}", Config::default_path().display());
     Ok(())
+}
+
+fn ensure_index_cache(config: &Config) -> Result<std::path::PathBuf> {
+    let db_path = config.vault.path.join(&config.database.path);
+    if db_path.exists() {
+        return Ok(db_path);
+    }
+
+    let index = VaultIndex::scan(config)?;
+    config.create_agent_dirs()?;
+    let mut store = IndexStore::open(&db_path)?;
+    store.write_index(&index)?;
+    Ok(db_path)
+}
+
+fn print_search_results(results: &[SearchHit]) {
+    for (position, result) in results.iter().enumerate() {
+        println!("{}. {}", position + 1, result.path);
+        println!("   title: {}", result.title);
+        if !result.heading_path.is_empty() {
+            println!("   heading: {}", result.heading_path);
+        }
+        println!("   tokens: {}", result.token_estimate);
+        println!("   score: {:.4}", result.score);
+        println!("   {}", result.snippet);
+    }
 }
